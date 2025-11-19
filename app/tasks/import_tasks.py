@@ -169,15 +169,23 @@ def import_products_task(self, file_path: str, task_id: str):
         }
         
     except Exception as e:
+        # Extract serializable error info before raising
+        # Original exception may contain non-serializable objects (DB session, file handles, etc.)
+        error_message = str(e)
+        error_type = type(e).__name__
+        
         self.update_progress(
             0, 
             "FAILURE", 
-            f"Import failed: {str(e)}",
+            f"Import failed: {error_message}",
             rows_processed=row_count,
             error_count=len(errors)
         )
         db.rollback()
-        raise
+        
+        # Raise a new simple exception that Celery can serialize to Redis
+        # This prevents "Exception information must include the exception type" error
+        raise RuntimeError(f"{error_type}: {error_message}")
     finally:
         db.close()
         # Clean up file
