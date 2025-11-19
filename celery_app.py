@@ -1,5 +1,19 @@
 from celery import Celery
 from app.config import settings
+import redis
+import sys
+
+# Clear corrupted Celery results on worker startup
+if 'celery' in sys.argv[0].lower() or 'worker' in ' '.join(sys.argv).lower():
+    try:
+        r = redis.from_url(settings.CELERY_RESULT_BACKEND, decode_responses=False)
+        # Clear only Celery result keys
+        keys = r.keys('celery-task-meta-*')
+        if keys:
+            r.delete(*keys)
+            print(f"Cleared {len(keys)} corrupted Celery result keys")
+    except Exception as e:
+        print(f"Warning: Could not clear Redis: {e}")
 
 celery_app = Celery(
     "product_importer",
@@ -21,5 +35,6 @@ celery_app.conf.update(
     task_time_limit=3600,  # 1 hour timeout for large files
     task_soft_time_limit=3300,  # 55 minutes soft limit
     broker_connection_retry_on_startup=True,
+    result_expires=3600,  # Results expire after 1 hour
 )
 
