@@ -26,8 +26,11 @@ class ProgressTask(Task):
         )
 
 @celery_app.task(bind=True, base=ProgressTask)
-def import_products_task(self, file_path: str, task_id: str):
+def import_products_task(self, file_content_b64: str, task_id: str):
     """Process CSV file and import products efficiently for large files"""
+    import base64
+    import tempfile
+    
     db = SessionLocal()
     total_rows = 0
     processed = 0
@@ -36,6 +39,11 @@ def import_products_task(self, file_path: str, task_id: str):
     start_time = time.time()
     last_update_time = start_time
     last_row_count = 0
+    
+    # Decode file content and write to temp file
+    # On Render, web service and worker are separate containers, so we pass file content
+    file_content = base64.b64decode(file_content_b64.encode('utf-8'))
+    temp_file = None
     
     try:
         self.update_progress(
@@ -48,12 +56,17 @@ def import_products_task(self, file_path: str, task_id: str):
             eta_seconds=None
         )
         
+        # Create temp file for processing
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.csv', delete=False) as tf:
+            tf.write(file_content)
+            temp_file = tf.name
+        
         # Ultra-fast processing: use very large chunks with COPY
         # COPY is so fast we can process much larger chunks
         chunk_size = 50000  # 50k rows per chunk for maximum COPY efficiency
         
         # Process file in chunks without pre-counting (saves one full file read)
-        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(temp_file, 'r', encoding='utf-8', errors='replace') as f:
             reader = csv.DictReader(f)
             chunk = []
             
@@ -184,10 +197,10 @@ def import_products_task(self, file_path: str, task_id: str):
         raise RuntimeError(f"{error_type}: {error_message}")
     finally:
         db.close()
-        # Clean up file
-        if os.path.exists(file_path):
+        # Clean up temp file
+        if temp_file and os.path.exists(temp_file):
             try:
-                os.remove(file_path)
+                os.remove(temp_file)
             except Exception:
                 pass  # Ignore cleanup errors
 
