@@ -46,7 +46,25 @@ def import_products_task(self, task_id: str):
     if not file_upload:
         raise RuntimeError(f"File upload not found for task_id: {task_id}")
     
-    file_content = file_upload.file_content
+    # Handle both regular bytea and large object storage
+    if file_upload.large_object_oid:
+        # Large object storage - retrieve from PostgreSQL
+        from app.database import engine
+        import io
+        loid = int(file_upload.large_object_oid)
+        raw_conn = engine.raw_connection()
+        try:
+            lo = raw_conn.connection.lobject(loid, 'rb')
+            file_content = lo.read()
+            lo.close()
+        finally:
+            raw_conn.close()
+    elif file_upload.file_content:
+        # Regular bytea storage
+        file_content = file_upload.file_content
+    else:
+        raise RuntimeError("File content is empty - neither bytea nor large object found")
+    
     if not file_content or len(file_content) == 0:
         raise RuntimeError("File content is empty")
     
@@ -213,9 +231,25 @@ def import_products_task(self, task_id: str):
         # This must be a simple exception with only string data
         raise RuntimeError(f"{error_type}: {error_message}")
     finally:
-        # Clean up: delete file from database and temp file
+        # Clean up: delete file from database and large object if exists
         try:
             if file_upload:
+                # Delete large object if it exists
+                if file_upload.large_object_oid:
+                    from app.database import engine
+                    try:
+                        loid = int(file_upload.large_object_oid)
+                        raw_conn = engine.raw_connection()
+                        try:
+                            cursor = raw_conn.cursor()
+                            cursor.execute("SELECT lo_unlink(%s)", (loid,))
+                            raw_conn.commit()
+                            cursor.close()
+                        finally:
+                            raw_conn.close()
+                    except Exception:
+                        pass  # Ignore large object deletion errors
+                
                 db.delete(file_upload)
                 db.commit()
         except Exception:
