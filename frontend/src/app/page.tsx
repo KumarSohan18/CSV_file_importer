@@ -51,7 +51,6 @@ const EVENT_TYPES = [
 
 const TABS = [
   { id: "upload", label: "Upload CSV" },
-  { id: "products", label: "Products" },
   { id: "webhooks", label: "Webhooks" },
 ];
 
@@ -169,13 +168,10 @@ export default function HomePage() {
   }, [notify]);
 
   useEffect(() => {
-    if (activeTab === "products") {
-      fetchProducts(1);
-    }
-    if (activeTab === "webhooks") {
-      fetchWebhooks();
-    }
-  }, [activeTab, fetchProducts, fetchWebhooks]);
+    // Always fetch products and webhooks on mount
+    fetchProducts(1);
+    fetchWebhooks();
+  }, [fetchProducts, fetchWebhooks]);
 
   const resetProductForm = () => {
     setProductForm({
@@ -290,9 +286,8 @@ export default function HomePage() {
           es.close();
           setIsUploading(false);
           setSelectedFile(null);
-          if (activeTab === "products") {
-            fetchProducts(productResponse.page);
-          }
+          // Always refresh products after successful upload
+          fetchProducts(productResponse.page);
         } else if (payload.status === "failure") {
           notify("error", payload.message || "Import failed");
           es.close();
@@ -795,10 +790,9 @@ export default function HomePage() {
             </div>
           )}
         </div>
-      </section>
 
-      <section hidden={activeTab !== "products"}>
-        <div className="card">
+        {/* Products section - always visible under upload */}
+        <div className="card" style={{ marginTop: "2rem" }}>
           <div className="card-header">
             <h2>Product Management</h2>
             <div className="actions">

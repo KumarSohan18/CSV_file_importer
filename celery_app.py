@@ -51,5 +51,17 @@ celery_app.conf.update(
     task_soft_time_limit=3300,  # 55 minutes soft limit
     broker_connection_retry_on_startup=True,
     result_expires=3600,  # Results expire after 1 hour
+    # Increase message size limits for large file uploads (500MB max)
+    broker_transport_options={
+        'max_connections': 10,
+        'visibility_timeout': 3600,
+    },
+    # For Redis backend, increase max message size
+    result_backend_transport_options={
+        'master_name': 'mymaster',
+        'retry_policy': {
+            'timeout': 5.0
+        }
+    },
 )
 

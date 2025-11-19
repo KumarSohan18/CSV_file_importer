@@ -26,10 +26,10 @@ class ProgressTask(Task):
         )
 
 @celery_app.task(bind=True, base=ProgressTask)
-def import_products_task(self, file_content_b64: str, task_id: str):
+def import_products_task(self, task_id: str):
     """Process CSV file and import products efficiently for large files"""
-    import base64
     import tempfile
+    from app.models import FileUpload
     
     db = SessionLocal()
     total_rows = 0
@@ -40,16 +40,23 @@ def import_products_task(self, file_content_b64: str, task_id: str):
     last_update_time = start_time
     last_row_count = 0
     
-    # Decode file content and write to temp file
-    # On Render, web service and worker are separate containers, so we pass file content
-    file_content = base64.b64decode(file_content_b64.encode('utf-8'))
+    # Retrieve file content from PostgreSQL (Redis is too small for large files)
+    # On Render, web service and worker are separate containers, so we use database
+    file_upload = db.query(FileUpload).filter(FileUpload.task_id == task_id).first()
+    if not file_upload:
+        raise RuntimeError(f"File upload not found for task_id: {task_id}")
+    
+    file_content = file_upload.file_content
+    if not file_content or len(file_content) == 0:
+        raise RuntimeError("File content is empty")
+    
     temp_file = None
     
     try:
         self.update_progress(
             0, 
-            "PROCESSING", 
-            "Starting import...",
+            "PROGRESS", 
+            f"Starting import... File size: {len(file_content):,} bytes",
             rows_processed=0,
             rows_total=None,
             processing_speed=0,
@@ -61,6 +68,10 @@ def import_products_task(self, file_content_b64: str, task_id: str):
             tf.write(file_content)
             temp_file = tf.name
         
+        # Verify file was written correctly
+        if not os.path.exists(temp_file) or os.path.getsize(temp_file) == 0:
+            raise RuntimeError(f"Failed to create temp file or file is empty. Temp file: {temp_file}")
+        
         # Ultra-fast processing: use very large chunks with COPY
         # COPY is so fast we can process much larger chunks
         chunk_size = 50000  # 50k rows per chunk for maximum COPY efficiency
@@ -69,6 +80,10 @@ def import_products_task(self, file_content_b64: str, task_id: str):
         with open(temp_file, 'r', encoding='utf-8', errors='replace') as f:
             reader = csv.DictReader(f)
             chunk = []
+            
+            # Check if file has headers
+            if not reader.fieldnames:
+                raise RuntimeError("CSV file has no headers or is empty")
             
             for row in reader:
                 row_count += 1
@@ -129,7 +144,7 @@ def import_products_task(self, file_content_b64: str, task_id: str):
                     
                     self.update_progress(
                         progress,
-                        "PROCESSING",
+                        "PROGRESS",
                         message,
                         rows_processed=row_count,
                         rows_total=estimated_total,
@@ -160,9 +175,10 @@ def import_products_task(self, file_content_b64: str, task_id: str):
             "errors": len(errors)
         })
         
+        # Update to 100% progress before returning (Celery will set SUCCESS automatically)
         self.update_progress(
             100, 
-            "SUCCESS", 
+            "PROGRESS", 
             f"Import complete! {processed:,} products imported from {total_rows:,} rows in {elapsed_total:.1f}s ({int(final_speed):,} rows/sec)",
             rows_processed=total_rows,
             rows_total=total_rows,
@@ -172,6 +188,7 @@ def import_products_task(self, file_content_b64: str, task_id: str):
             error_count=len(errors)
         )
         
+        # Return result - Celery will automatically set state to SUCCESS
         return {
             "processed": processed,
             "errors": errors[:100],  # Limit error details to first 100
@@ -196,7 +213,16 @@ def import_products_task(self, file_content_b64: str, task_id: str):
         # This must be a simple exception with only string data
         raise RuntimeError(f"{error_type}: {error_message}")
     finally:
+        # Clean up: delete file from database and temp file
+        try:
+            if file_upload:
+                db.delete(file_upload)
+                db.commit()
+        except Exception:
+            db.rollback()
+        
         db.close()
+        
         # Clean up temp file
         if temp_file and os.path.exists(temp_file):
             try:
