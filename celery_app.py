@@ -1,27 +1,42 @@
 from celery import Celery
+from celery.signals import worker_ready
 from app.config import settings
 import redis
 import sys
 
-# Clear corrupted Celery results on worker startup
-if 'celery' in sys.argv[0].lower() or 'worker' in ' '.join(sys.argv).lower():
+def clear_redis_keys():
+    """Clear corrupted Celery result keys from Redis"""
     try:
         r = redis.from_url(settings.CELERY_RESULT_BACKEND, decode_responses=False)
-        # Clear only Celery result keys
-        keys = r.keys('celery-task-meta-*')
-        if keys:
-            r.delete(*keys)
-            print(f"Cleared {len(keys)} corrupted Celery result keys")
+        # Clear ALL Celery-related keys
+        patterns = ['celery-task-meta-*']
+        total_cleared = 0
+        for pattern in patterns:
+            keys = r.keys(pattern)
+            if keys:
+                r.delete(*keys)
+                total_cleared += len(keys)
+        if total_cleared > 0:
+            print(f"Cleared {total_cleared} Celery keys")
     except Exception as e:
         print(f"Warning: Could not clear Redis: {e}")
+
+# Clear at import time (backup)
+if 'celery' in sys.argv[0].lower() or 'worker' in ' '.join(sys.argv).lower():
+    clear_redis_keys()
 
 celery_app = Celery(
     "product_importer",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
     include=["app.tasks.import_tasks"]
-
 )
+
+# Clear corrupted Celery results when worker is ready (primary clearing point)
+@worker_ready.connect
+def clear_corrupted_results(sender=None, **kwargs):
+    """Clear all Celery result keys when worker starts to prevent corruption errors"""
+    clear_redis_keys()
 
 celery_app.conf.update(
     task_serializer='json',
