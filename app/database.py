@@ -16,17 +16,13 @@ if database_url.startswith('postgresql://') and '+psycopg' not in database_url:
         except ImportError:
             pass  # Fall back to psycopg2
 
-# Optimize engine for bulk operations and large file uploads
+# Optimize engine for bulk operations
 engine = create_engine(
     database_url,
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,
-    echo=False,  # Disable SQL logging for performance
-    connect_args={
-        "connect_timeout": 60,  # 60 second connection timeout
-        "options": "-c statement_timeout=300000"  # 5 minute statement timeout for large inserts
-    }
+    echo=False  # Disable SQL logging for performance
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

@@ -37,11 +37,9 @@ class FileUpload(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     task_id = Column(String(255), nullable=False, unique=True, index=True)
-    file_content = Column(LargeBinary, nullable=True)  # Nullable for large object storage
-    large_object_oid = Column(String(50), nullable=True)  # PostgreSQL large object OID
+    file_content = Column(LargeBinary, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     def __repr__(self):
-        size = len(self.file_content) if self.file_content else 0
-        return f"<FileUpload(task_id={self.task_id}, size={size}, lo_oid={self.large_object_oid})>"
+        return f"<FileUpload(task_id={self.task_id}, size={len(self.file_content) if self.file_content else 0})>"
 
